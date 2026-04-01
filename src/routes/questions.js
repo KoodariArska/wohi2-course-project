@@ -78,5 +78,24 @@ router.put("/:qId", (req, res) => {
   res.json(editedQuestion);
 });
 
+// DELETE /api/questions/:qId
+// Delete a question
+router.delete("/:qId", (req, res) => {
+    const qId = Number(req.params.qId);
+
+    const questionIndex = questions.findIndex((q) => q.id === qId);
+
+    if (questionIndex === -1) {
+        return res.status(404).json({ message: "Question not found" });
+    }
+
+    const deletedQuestion = questions.splice(questionIndex, 1);
+
+    res.json({
+        message: "Question deleted successfully",
+        question: deletedQuestion[0]
+    });
+});
+
 
 module.exports = router;
