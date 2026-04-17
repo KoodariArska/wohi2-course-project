@@ -1,3 +1,5 @@
 node_modules/
 .env
 wohii-bruno-collection
+
+/src/generated/prisma
