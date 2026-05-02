@@ -11,25 +11,47 @@ function formatQuestion(question) {
   return {
     ...question,
     keywords: question.keywords.map((k) => k.name),
+    userName: question.user ? question.user.name : null,
+    likeCount: question._count?.likes ?? 0,
+    liked: question.likes ? question.likes.length > 0 : false,
+    user: undefined,
+    _count: undefined,
+    likes: undefined
   };
 }
 
-// GET /api/questions
+// GET /api/questions, with optional ?keyword=business, pagination with ?page=1&limit=5
 // List all questions / ones with certain keyword
 router.get("/", async (req, res) => {
     const { keyword } = req.query;
 
-    const where = keyword
-        ? { keywords: { some: { name: keyword } } }
-        : {};
+    const where = keyword ? 
+    { keywords: { some: { name: keyword } } } : {};
+    
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 5));
+    const skip = (page - 1) * limit;
 
-    const questions = await prisma.question.findMany({
+    const [filteredQuestions, total] = await Promise.all([prisma.question.findMany({
         where,
-        include: { keywords: true },
+        include: { 
+            keywords: true, 
+            user: true, 
+            likes: {where: { userId: req.user.userId }, take: 1 },
+            _count: { select: { likes: true } }
+        },
         orderBy: { id: "asc" },
-    });
+        skip,
+        take: limit
+    }), prisma.question.count({ where })]);
 
-    res.json(questions.map(formatQuestion));
+    res.json({
+        data: filteredQuestions.map(formatQuestion),
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+    })
 });
 
 
@@ -39,7 +61,12 @@ router.get("/:qId", async (req, res) => {
     const qId = Number(req.params.qId);
     const question = await prisma.question.findUnique({
         where: { id: qId },
-        include: { keywords: true },
+        include: { 
+            keywords: true, 
+            user: true,
+            likes: {where: { userId: req.user.userId }, take: 1 },
+            _count: { select: { likes: true } }
+        },
     });
 
     if (!question) {
@@ -107,7 +134,7 @@ router.put("/:qId", isOwner, async (req, res) => {
             })),
         },
         },
-        include: { keywords: true },
+        include: { keywords: true, user: true },
     });
     res.json(formatQuestion(updatedQuestion));
 });
@@ -120,7 +147,7 @@ router.delete("/:qId", isOwner, async (req, res) => {
 
     const question = await prisma.question.findUnique({
         where: { id: qId },
-        include: { keywords: true },
+        include: { keywords: true, user: true },
     });
 
     if (!question) {
@@ -132,6 +159,58 @@ router.delete("/:qId", isOwner, async (req, res) => {
     res.json({
         message: "Question deleted successfully",
         question: formatQuestion(question),
+    });
+});
+
+
+// POST /api/questions/:qId/like
+// Like a question (idempotent)
+router.post("/:qId/like", async (req, res) => {
+    const qId = Number(req.params.qId);
+
+    const question = await prisma.question.findUnique({ where: { id: qId } });
+    if (!question) {
+        return res.status(404).json({ message: "Question not found" });
+    }
+
+    const like = await prisma.like.upsert({
+        where: { userId_qId: { userId: req.user.userId, qId } },
+        update: {},
+        create: { userId: req.user.userId, qId },
+    });
+
+    const likeCount = await prisma.like.count({ where: { qId } });
+
+    res.status(201).json({
+        id: like.id,
+        qId,
+        liked: true,
+        likeCount,
+        createdAt: like.createdAt,
+    });
+});
+
+
+// DELETE /api/questions/:qId/like
+// Delete a like (idempotent)
+router.delete("/:qId/like", async (req, res) => {
+    const qId = Number(req.params.qId);
+
+    const question = await prisma.question.findUnique({ where: { id: qId } });
+    if (!question) {
+        return res.status(404).json({ message: "Question not found" });
+    }
+
+    const like = await prisma.like.deleteMany({
+        where: { userId: req.user.userId, qId }
+    });
+
+    const likeCount = await prisma.like.count({ where: { qId } });
+
+    res.json({
+        qId,
+        liked: false,
+        likeCount,
     });
 });
 
