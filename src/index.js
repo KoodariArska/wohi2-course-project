@@ -3,8 +3,12 @@ const app = express();
 const prisma = require("./lib/prisma");
 const questionsRouter = require("./routes/questions");
 const authRouter = require("./routes/auth");
+const path = require('path');
 
 const PORT = process.env.PORT || 3000;
+
+// Frontend
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Middleware
 app.use(express.json());

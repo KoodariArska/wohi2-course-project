@@ -3,3 +3,5 @@ node_modules/
 wohii-bruno-collection
 
 /src/generated/prisma
+public/uploads/*
+!public/uploads/.gitkeep
