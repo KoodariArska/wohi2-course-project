@@ -5,9 +5,17 @@ const authenticate = require("../middleware/auth");
 const isOwner = require("../middleware/isOwner");
 const multer = require("multer");
 const path = require('path');
+const { NotFoundError, ValidationError } = require("../lib/errors");
+const { z } = require("zod");
 
 // Apply authentication to ALL routes in this router
 router.use(authenticate);
+
+const QuestionInput = z.object({
+    title: z.string().min(1),
+    answer: z.string().min(1),
+    keywords: z.union([z.string(), z.array(z.string())]).optional(),
+});
 
 const storage = multer.diskStorage({
     destination: path.join(__dirname, "..", "..", "public", "uploads"),
@@ -39,13 +47,9 @@ function formatQuestion(question) {
         ...question,
         keywords: question.keywords.map((k) => k.name),
         userName: question.user ? question.user.name : null,
-        likeCount: question._count?.likes ?? 0,
-        liked: question.likes ? question.likes.length > 0 : false,
         solved: question.attempts ? question.attempts.length > 0 && question.attempts[0].correct : false,
         user: undefined,
-        _count: undefined,
-        likes: undefined,
-        attempts: undefined,
+        attempts: undefined
     };
 };
 
@@ -74,9 +78,7 @@ router.get("/", async (req, res) => {
         include: { 
             keywords: true, 
             user: true, 
-            attempts: {where: { userId: req.user.userId }, take: 1 },
-            likes: {where: { userId: req.user.userId }, take: 1 },
-            _count: { select: { likes: true } }
+            attempts: {where: { userId: req.user.userId }, take: 1 }
         },
         orderBy: { id: "asc" },
         skip,
@@ -102,16 +104,12 @@ router.get("/:qId", async (req, res) => {
         include: { 
             keywords: true, 
             user: true,
-            attempts: {where: { userId: req.user.userId }, take: 1 },
-            likes: {where: { userId: req.user.userId }, take: 1 },
-            _count: { select: { likes: true } }
+            attempts: {where: { userId: req.user.userId }, take: 1 }
         },
     });
 
     if (!question) {
-        return res.status(404).json({ 
-            message: "Question not found" 
-        });
+        throw new NotFoundError("Question not found");
     }
 
     res.json(formatQuestion(question));
@@ -121,12 +119,7 @@ router.get("/:qId", async (req, res) => {
 // POST /api/questions
 // Create a new question
 router.post("/", upload.single("image"), async (req, res) => {
-    const { title, answer, keywords } = req.body;
-
-    if (!title || !answer) {
-        return res.status(400).json({ msg: 
-        "Question and answer are mandatory" });
-    }
+    const { title, answer, keywords } = QuestionInput.parse(req.body);
 
     const keywordsArray = parseKeywords(keywords);
     const imageURL = req.file ? `/uploads/${req.file.filename}` : null;
@@ -150,14 +143,15 @@ router.post("/", upload.single("image"), async (req, res) => {
 // Edit a question
 router.put("/:qId", upload.single("image"), isOwner, async (req, res) => {
     const qId = Number(req.params.qId);
-    const { title, answer, keywords } = req.body;
+    const { title, answer, keywords } = QuestionInput.parse(req.body);
     const existingQuestion = await prisma.question.findUnique({ where: { id: qId } });
+    
     if (!existingQuestion) {
-        return res.status(404).json({ message: "Question not found" });
+        throw new NotFoundError("Question not found");
     }
 
     if (!title || !answer) {
-        return res.status(400).json({ msg: "Question and answer are mandatory" });
+        throw new ValidationError("Question and answer are mandatory");
     }
 
     const imageURL = req.file ? `/uploads/${req.file.filename}` : null;
@@ -191,7 +185,7 @@ router.delete("/:qId", isOwner, async (req, res) => {
     });
 
     if (!question) {
-        return res.status(404).json({ message: "Question not found" });
+        throw new NotFoundError("Question not found");
     }
 
     await prisma.attempt.deleteMany({ where: { qId } });
@@ -200,58 +194,6 @@ router.delete("/:qId", isOwner, async (req, res) => {
     res.json({
         message: "Question deleted successfully",
         question: formatQuestion(question),
-    });
-});
-
-
-// POST /api/questions/:qId/like
-// Like a question (idempotent)
-router.post("/:qId/like", async (req, res) => {
-    const qId = Number(req.params.qId);
-
-    const question = await prisma.question.findUnique({ where: { id: qId } });
-    if (!question) {
-        return res.status(404).json({ message: "Question not found" });
-    }
-
-    const like = await prisma.like.upsert({
-        where: { userId_qId: { userId: req.user.userId, qId } },
-        update: {},
-        create: { userId: req.user.userId, qId },
-    });
-
-    const likeCount = await prisma.like.count({ where: { qId } });
-
-    res.status(201).json({
-        id: like.id,
-        qId,
-        liked: true,
-        likeCount,
-        createdAt: like.createdAt,
-    });
-});
-
-
-// DELETE /api/questions/:qId/like
-// Delete a like (idempotent)
-router.delete("/:qId/like", async (req, res) => {
-    const qId = Number(req.params.qId);
-
-    const question = await prisma.question.findUnique({ where: { id: qId } });
-    if (!question) {
-        return res.status(404).json({ message: "Question not found" });
-    }
-
-    const like = await prisma.like.deleteMany({
-        where: { userId: req.user.userId, qId }
-    });
-
-    const likeCount = await prisma.like.count({ where: { qId } });
-
-    res.json({
-        qId,
-        liked: false,
-        likeCount,
     });
 });
 
@@ -265,7 +207,7 @@ router.post("/:qId/play", async (req, res) => {
     const question = await prisma.question.findUnique({ where: { id: qId } });
 
     if (!question) {
-        return res.status(404).json({ message: "Question not found" });
+        throw new NotFoundError("Question not found");
     }
 
     const isCorrect = question.answer.trim().toLowerCase() === answer.trim().toLowerCase();
