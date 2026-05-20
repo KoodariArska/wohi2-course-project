@@ -11,7 +11,7 @@ ALTER TABLE `questions` DROP FOREIGN KEY `questions_userId_fkey`;
 DROP INDEX `questions_userId_fkey` ON `questions`;
 
 -- DropTable
-DROP TABLE `user`;
+DROP TABLE `User`;
 
 -- CreateTable
 CREATE TABLE `users` (
